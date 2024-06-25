@@ -18,6 +18,7 @@ package names
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -293,6 +294,21 @@ func IsOptInRegion(region string) bool {
 	default:
 		return false
 	}
+}
+
+func IsIsolatedRegion(region string) bool {
+	partition := PartitionForRegion(region)
+
+	return IsIsolatedPartition(partition)
+}
+
+func IsIsolatedPartition(partition string) bool {
+
+	pattern := `^aws-iso-.*$`
+
+	re := regexp.MustCompile(pattern)
+
+	return re.MatchString(partition)
 }
 
 func PartitionForRegion(region string) string {

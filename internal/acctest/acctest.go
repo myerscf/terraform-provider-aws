@@ -840,6 +840,10 @@ func PartitionDNSSuffix() string {
 	return names.DNSSuffixForPartition(Partition())
 }
 
+func PartitionSPNSuffix() string {
+	return names.ServicePrincipalSuffixForPartition(Partition())
+}
+
 func PartitionReverseDNSPrefix() string {
 	return names.ReverseDNS(PartitionDNSSuffix())
 }
@@ -884,6 +888,10 @@ func PreCheckPartitionHasService(t *testing.T, serviceID string) {
 
 func PreCheckMultipleRegion(t *testing.T, regions int) {
 	t.Helper()
+
+	if names.IsIsolatedRegion(Region()) {
+		t.Skipf("Skipping multiple region test the region (%s) is isolated", Region())
+	}
 
 	if Region() == AlternateRegion() {
 		t.Fatalf("%s and %s must be set to different values for acceptance tests", envvar.DefaultRegion, envvar.AlternateRegion)
