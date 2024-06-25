@@ -241,6 +241,43 @@ func DNSSuffixForPartition(partition string) string {
 	}
 }
 
+func ServicePrincipalSuffixForPartition(partition string) string {
+	switch partition {
+	case ChinaPartitionID:
+		return "amazonaws.com.cn"
+	case ISOPartitionID:
+		return "c2s.ic.gov"
+	case ISOBPartitionID:
+		return "sc2s.sgov.gov"
+	default:
+		return "amazonaws.com"
+	}
+}
+
+func ServicePrincipalNameForPartition(service string, partition string) string {
+	if service != "" && partition != StandardPartitionID {
+		switch partition {
+		case ISOPartitionID:
+			switch service {
+			case "logs":
+				return "c2s.ic.gov"
+			}
+		case ISOBPartitionID:
+			switch service {
+			case "logs":
+				return "sc2s.ic.gov"
+			}
+		case ChinaPartitionID:
+			switch service {
+			case "codedeploy", "logs":
+				return "amazonaws.com.cn"
+			}
+		}
+	}
+
+	return "amazonaws.com"
+}
+
 func IsOptInRegion(region string) bool {
 	switch region {
 	case AFSouth1RegionID,
