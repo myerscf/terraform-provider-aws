@@ -591,6 +591,7 @@ data "aws_iam_policy_document" "policy" {
 func testAccBucketPolicyIAMRoleOrderConfig_base(rName string) string {
 	return fmt.Sprintf(`
 data "aws_partition" "current" {}
+data "aws_service_principal" "current" {}
 
 resource "aws_iam_role" "test1" {
   name = "%[1]s-sultan"
@@ -600,7 +601,7 @@ resource "aws_iam_role" "test1" {
       Action = "sts:AssumeRole"
       Effect = "Allow"
       Principal = {
-        Service = "s3.${data.aws_partition.current.dns_suffix}"
+        Service = "s3.${data.aws_service_principal.current.suffix}"
       }
     }]
     Version = "2012-10-17"
@@ -615,7 +616,7 @@ resource "aws_iam_role" "test2" {
       Action = "sts:AssumeRole"
       Effect = "Allow"
       Principal = {
-        Service = "s3.${data.aws_partition.current.dns_suffix}"
+        Service = "s3.${data.aws_service_principal.current.suffix}"
       }
     }]
     Version = "2012-10-17"
@@ -630,7 +631,7 @@ resource "aws_iam_role" "test3" {
       Action = "sts:AssumeRole"
       Effect = "Allow"
       Principal = {
-        Service = "s3.${data.aws_partition.current.dns_suffix}"
+        Service = "s3.${data.aws_service_principal.current.suffix}"
       }
     }]
     Version = "2012-10-17"
@@ -645,7 +646,7 @@ resource "aws_iam_role" "test4" {
       Action = "sts:AssumeRole"
       Effect = "Allow"
       Principal = {
-        Service = "s3.${data.aws_partition.current.dns_suffix}"
+        Service = "s3.${data.aws_service_principal.current.suffix}"
       }
     }]
     Version = "2012-10-17"
@@ -660,7 +661,7 @@ resource "aws_iam_role" "test5" {
       Action = "sts:AssumeRole"
       Effect = "Allow"
       Principal = {
-        Service = "s3.${data.aws_partition.current.dns_suffix}"
+        Service = "s3.${data.aws_service_principal.current.suffix}"
       }
     }]
     Version = "2012-10-17"

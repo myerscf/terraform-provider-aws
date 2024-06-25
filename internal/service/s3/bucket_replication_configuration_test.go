@@ -1273,6 +1273,7 @@ func testAccCheckBucketReplicationConfigurationExists(ctx context.Context, n str
 func testAccBucketReplicationConfigurationConfig_base(rName string) string {
 	return fmt.Sprintf(`
 data "aws_partition" "current" {}
+data "aws_service_principal" "current" {}
 
 resource "aws_iam_role" "test" {
   name = %[1]q
@@ -1284,7 +1285,7 @@ resource "aws_iam_role" "test" {
     {
       "Action": "sts:AssumeRole",
       "Principal": {
-        "Service": "s3.${data.aws_partition.current.dns_suffix}"
+        "Service": "s3.${data.aws_service_principal.current.suffix}"
       },
       "Effect": "Allow",
       "Sid": ""
@@ -1924,6 +1925,8 @@ resource "aws_s3_bucket_replication_configuration" "test" {
 
 func testAccBucketReplicationConfigurationConfig_schemaV2SameRegion(rName, rNameDestination string) string {
 	return fmt.Sprintf(`
+data "aws_service_principal" "current" {}
+
 resource "aws_iam_role" "test" {
   name = %[1]q
 
@@ -1934,7 +1937,7 @@ resource "aws_iam_role" "test" {
     {
       "Action": "sts:AssumeRole",
       "Principal": {
-        "Service": "s3.amazonaws.com"
+        "Service": "s3.${data.aws_service_principal.current.suffix}"
       },
       "Effect": "Allow",
       "Sid": ""
@@ -1998,6 +2001,7 @@ resource "aws_s3_bucket_replication_configuration" "test" {
 func testAccBucketReplicationConfigurationConfig_existingObject(rName, rNameDestination string) string {
 	return fmt.Sprintf(`
 data "aws_partition" "current" {}
+data "aws_service_principal" "current" {}
 
 resource "aws_iam_role" "test" {
   name = %[1]q
@@ -2009,7 +2013,7 @@ resource "aws_iam_role" "test" {
     {
       "Action": "sts:AssumeRole",
       "Principal": {
-        "Service": "s3.${data.aws_partition.current.dns_suffix}"
+        "Service": "s3.${data.aws_service_principal.current.suffix}"
       },
       "Effect": "Allow",
       "Sid": ""
@@ -2296,6 +2300,7 @@ resource "aws_s3_bucket_replication_configuration" "test" {
 func testAccBucketReplicationConfigurationConfig_migrationBase(rName string) string {
 	return fmt.Sprintf(`
 data "aws_partition" "current" {}
+data "aws_service_principal" "current" {}
 
 resource "aws_iam_role" "role" {
   name = %[1]q
@@ -2307,7 +2312,7 @@ resource "aws_iam_role" "role" {
     {
       "Action": "sts:AssumeRole",
       "Principal": {
-        "Service": "s3.${data.aws_partition.current.dns_suffix}"
+        "Service": "s3.${data.aws_service_principal.current.suffix}"
       },
       "Effect": "Allow",
       "Sid": ""
