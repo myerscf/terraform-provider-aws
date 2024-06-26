@@ -113,7 +113,7 @@ func (d *dataSourceRegion) Read(ctx context.Context, request datasource.ReadRequ
 		region = matchingRegion
 	}
 
-	regionEndpointEC2, err := region.ResolveEndpoint(ec2.EndpointsID, endpoints.ResolveUnknownServiceOption)
+	regionEndpointEC2, err := region.ResolveEndpoint(ec2.EndpointsID)
 
 	if err != nil {
 		response.Diagnostics.AddError("resolving EC2 endpoint", err.Error())
