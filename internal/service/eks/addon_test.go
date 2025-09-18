@@ -406,86 +406,62 @@ func TestAccEKSAddon_tags(t *testing.T) {
 
 func TestAccEKSAddon_supportedAddons(t *testing.T) {
 	ctx := acctest.Context(t)
-	rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
-	clusterResourceName := "aws_eks_cluster.test"
 
 	// List of core EKS addons that are reliable and commonly used
-	supportedAddons := []struct {
-		name             string
-		resolveConflicts string
-	}{
-		// {"vpc-cni", "OVERWRITE"},
-		{"coredns", "OVERWRITE"},
-		{"kube-proxy", "OVERWRITE"},
-		{"aws-ebs-csi-driver", "OVERWRITE"},
-		{"eks-pod-identity-agent", "OVERWRITE"},
-		{"amazon-cloudwatch-observability", "OVERWRITE"},
-		// Note: amazon-cloudwatch-observability requires additional setup and can be flaky
-		// Note: karpenter requires specific IAM roles and node groups
-		// Note: ssm-agent may not be available in all regions
+	supportedAddons := []string{
+		// "vpc-cni", // Already installed by default
+		"coredns",
+		"kube-proxy",
+		"aws-ebs-csi-driver",
+		"eks-pod-identity-agent",
+		"amazon-cloudwatch-observability",
+		"eks-node-monitoring-agent",
+		// "amazon-sagemaker-hyperpod-observability",
+		// "amazon-sagemaker-hyperpod-taskgovernance",
+		"aws-guardduty-agent",
+		"aws-efs-csi-driver",
+		"aws-network-flow-monitoring-agent",
+		"snapshot-controller",
+		"sriov-network-metrics-exporter",
+		"aws-privateca-connector-for-kubernetes",
+		"aws-fsx-csi-driver",
+		"aws-mountpoint-s3-csi-driver",
 	}
 
-	var addons []types.Addon
+	for _, addonName := range supportedAddons {
+		t.Run(addonName, func(t *testing.T) {
+			var addonResource types.Addon
+			rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
+			clusterResourceName := "aws_eks_cluster.test"
+			addonResourceName := "aws_eks_addon.test"
 
-	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(ctx, t); testAccPreCheck(ctx, t); testAccPreCheckAddon(ctx, t) },
-		ErrorCheck:               acctest.ErrorCheck(t, names.EKSServiceID),
-		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
-		CheckDestroy:             testAccCheckAddonDestroy(ctx),
-		Steps: []resource.TestStep{
-			{
-				Config: testAccAddonConfig_supportedAddons(rName, supportedAddons),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					// Check cluster exists
-					resource.TestCheckResourceAttr(clusterResourceName, names.AttrName, rName),
-					resource.TestCheckResourceAttr(clusterResourceName, names.AttrVersion, clusterVersion133),
-					// Check each addon
-					func(s *terraform.State) error {
-						for i, addon := range supportedAddons {
-							addonResourceName := fmt.Sprintf("aws_eks_addon.test_%s", strings.ReplaceAll(addon.name, "-", "_"))
-
-							// Check addon exists
-							rs, ok := s.RootModule().Resources[addonResourceName]
-							if !ok {
-								return fmt.Errorf("Not found: %s", addonResourceName)
-							}
-
-							clusterName, addonName, err := tfeks.AddonParseResourceID(rs.Primary.ID)
-							if err != nil {
-								return err
-							}
-
-							conn := acctest.Provider.Meta().(*conns.AWSClient).EKSClient(ctx)
-							output, err := tfeks.FindAddonByTwoPartKey(ctx, conn, clusterName, addonName)
-							if err != nil {
-								return err
-							}
-
-							if len(addons) <= i {
-								addons = append(addons, make([]types.Addon, i+1-len(addons))...)
-							}
-							addons[i] = *output
-
-							// Verify addon properties
-							if output.AddonName == nil || *output.AddonName != addon.name {
-								return fmt.Errorf("Expected addon name %s, got %v", addon.name, output.AddonName)
-							}
-							if output.ClusterName == nil || *output.ClusterName != rName {
-								return fmt.Errorf("Expected cluster name %s, got %v", rName, output.ClusterName)
-							}
-						}
-						return nil
+			resource.ParallelTest(t, resource.TestCase{
+				PreCheck:                 func() { acctest.PreCheck(ctx, t); testAccPreCheck(ctx, t); testAccPreCheckAddon(ctx, t) },
+				ErrorCheck:               acctest.ErrorCheck(t, names.EKSServiceID),
+				ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
+				CheckDestroy:             testAccCheckAddonDestroy(ctx),
+				Steps: []resource.TestStep{
+					{
+						Config: testAccAddonConfig_supportedAddon(rName, addonName),
+						Check: resource.ComposeAggregateTestCheckFunc(
+							testAccCheckAddonExists(ctx, addonResourceName, &addonResource),
+							resource.TestCheckResourceAttr(addonResourceName, "addon_name", addonName),
+							resource.TestCheckResourceAttrSet(addonResourceName, "addon_version"),
+							acctest.MatchResourceAttrRegionalARN(ctx, addonResourceName, names.AttrARN, "eks", regexache.MustCompile(fmt.Sprintf("addon/%s/%s/.+$", rName, addonName))),
+							resource.TestCheckResourceAttrPair(addonResourceName, names.AttrClusterName, clusterResourceName, names.AttrName),
+							resource.TestCheckResourceAttr(clusterResourceName, names.AttrVersion, clusterVersion133),
+						),
 					},
-				),
-			},
-			{
-				ResourceName:            "aws_eks_addon.test_vpc_cni",
-				ImportState:             true,
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"resolve_conflicts_on_create", "resolve_conflicts_on_update"},
-			},
-		},
-	})
+					{
+						ResourceName:            addonResourceName,
+						ImportState:             true,
+						ImportStateVerify:       true,
+						ImportStateVerifyIgnore: []string{"resolve_conflicts_on_create", "resolve_conflicts_on_update"},
+					},
+				},
+			})
+		})
+	}
 }
 
 func testAccCheckAddonExists(ctx context.Context, n string, v *types.Addon) resource.TestCheckFunc {
@@ -910,4 +886,118 @@ resource "aws_eks_addon" "test_vpc_cni" {
 	}
 
 	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(strings.Join(addonConfigs, "\n"), rName, clusterVersion133))
+}
+func testAccAddonConfig_supportedAddon(rName, addonName string) string {
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
+resource "aws_internet_gateway" "test" {
+  vpc_id = aws_vpc.test.id
+  tags = {
+    Name = %[1]q
+  }
+}
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.test.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.test.id
+  }
+  tags = {
+    Name = %[1]q
+  }
+}
+
+resource "aws_subnet" "public" {
+  count = 2
+  # Use higher CIDR blocks to avoid conflicts with base subnets
+  cidr_block              = "10.0.${sum([count.index, 10])}.0/24"
+  vpc_id                  = aws_vpc.test.id
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name                          = %[1]q
+    "kubernetes.io/cluster/%[1]s" = "shared"
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  count          = 2
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
+data "aws_service_principal" "ec2" {
+  service_name = "ec2"
+}
+
+resource "aws_iam_role" "node_group" {
+  assume_role_policy = jsonencode({
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = data.aws_service_principal.ec2.name
+      }
+    }]
+    Version = "2012-10-17"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "node_group-AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.node_group.name
+}
+
+resource "aws_iam_role_policy_attachment" "node_group-AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.node_group.name
+}
+
+resource "aws_iam_role_policy_attachment" "node_group-AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.node_group.name
+}
+
+resource "aws_eks_node_group" "test_node_group" {
+  cluster_name    = aws_eks_cluster.test.name
+  node_group_name = "test-node-group"
+  node_role_arn   = aws_iam_role.node_group.arn
+  subnet_ids      = aws_subnet.public[*].id
+
+  scaling_config {
+    desired_size = 1
+    max_size     = 2
+    min_size     = 1
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  # Ensure that IAM Role permissions are created before and deleted after EKS Node Group handling.
+  # Otherwise, EKS will not be able to properly delete EC2 Instances and Elastic Network Interfaces.
+  depends_on = [
+    aws_iam_role_policy_attachment.node_group-AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.node_group-AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.node_group-AmazonEC2ContainerRegistryReadOnly,
+  ]
+}
+
+resource "aws_eks_addon" "test_vpc_cni" {
+  cluster_name = aws_eks_cluster.test.name
+  addon_name   = "vpc-cni"
+}
+
+resource "aws_eks_addon" "test" {
+  cluster_name                = aws_eks_cluster.test.name
+  addon_name                  = %[2]q
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [
+    aws_eks_node_group.test_node_group,
+  ]
+}
+`, rName, addonName))
 }
