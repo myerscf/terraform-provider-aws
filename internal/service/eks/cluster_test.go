@@ -32,6 +32,7 @@ const (
 	clusterVersion130 = "1.30"
 	clusterVersion131 = "1.31"
 	clusterVersion132 = "1.32"
+	clusterVersion133 = "1.33"
 
 	clusterDefaultVersion = clusterVersion132
 

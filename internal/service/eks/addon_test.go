@@ -6,6 +6,7 @@ package eks_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/YakDriver/regexache"
@@ -403,6 +404,90 @@ func TestAccEKSAddon_tags(t *testing.T) {
 	})
 }
 
+func TestAccEKSAddon_supportedAddons(t *testing.T) {
+	ctx := acctest.Context(t)
+	rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
+	clusterResourceName := "aws_eks_cluster.test"
+
+	// List of core EKS addons that are reliable and commonly used
+	supportedAddons := []struct {
+		name             string
+		resolveConflicts string
+	}{
+		// {"vpc-cni", "OVERWRITE"},
+		{"coredns", "OVERWRITE"},
+		{"kube-proxy", "OVERWRITE"},
+		{"aws-ebs-csi-driver", "OVERWRITE"},
+		{"eks-pod-identity-agent", "OVERWRITE"},
+		{"amazon-cloudwatch-observability", "OVERWRITE"},
+		// Note: amazon-cloudwatch-observability requires additional setup and can be flaky
+		// Note: karpenter requires specific IAM roles and node groups
+		// Note: ssm-agent may not be available in all regions
+	}
+
+	var addons []types.Addon
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(ctx, t); testAccPreCheck(ctx, t); testAccPreCheckAddon(ctx, t) },
+		ErrorCheck:               acctest.ErrorCheck(t, names.EKSServiceID),
+		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
+		CheckDestroy:             testAccCheckAddonDestroy(ctx),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAddonConfig_supportedAddons(rName, supportedAddons),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// Check cluster exists
+					resource.TestCheckResourceAttr(clusterResourceName, names.AttrName, rName),
+					resource.TestCheckResourceAttr(clusterResourceName, names.AttrVersion, clusterVersion133),
+					// Check each addon
+					func(s *terraform.State) error {
+						for i, addon := range supportedAddons {
+							addonResourceName := fmt.Sprintf("aws_eks_addon.test_%s", strings.ReplaceAll(addon.name, "-", "_"))
+
+							// Check addon exists
+							rs, ok := s.RootModule().Resources[addonResourceName]
+							if !ok {
+								return fmt.Errorf("Not found: %s", addonResourceName)
+							}
+
+							clusterName, addonName, err := tfeks.AddonParseResourceID(rs.Primary.ID)
+							if err != nil {
+								return err
+							}
+
+							conn := acctest.Provider.Meta().(*conns.AWSClient).EKSClient(ctx)
+							output, err := tfeks.FindAddonByTwoPartKey(ctx, conn, clusterName, addonName)
+							if err != nil {
+								return err
+							}
+
+							if len(addons) <= i {
+								addons = append(addons, make([]types.Addon, i+1-len(addons))...)
+							}
+							addons[i] = *output
+
+							// Verify addon properties
+							if output.AddonName == nil || *output.AddonName != addon.name {
+								return fmt.Errorf("Expected addon name %s, got %v", addon.name, output.AddonName)
+							}
+							if output.ClusterName == nil || *output.ClusterName != rName {
+								return fmt.Errorf("Expected cluster name %s, got %v", rName, output.ClusterName)
+							}
+						}
+						return nil
+					},
+				),
+			},
+			{
+				ResourceName:            "aws_eks_addon.test_vpc_cni",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"resolve_conflicts_on_create", "resolve_conflicts_on_update"},
+			},
+		},
+	})
+}
+
 func testAccCheckAddonExists(ctx context.Context, n string, v *types.Addon) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[n]
@@ -476,7 +561,7 @@ func testAccPreCheckAddon(ctx context.Context, t *testing.T) {
 	}
 }
 
-func testAccAddonConfig_base(rName string) string {
+func testAccAddonConfig_base(rName string, eksVersion string) string {
 	return acctest.ConfigCompose(acctest.ConfigAvailableAZsNoOptIn(), fmt.Sprintf(`
 data "aws_partition" "current" {}
 
@@ -533,6 +618,7 @@ resource "aws_subnet" "test" {
 resource "aws_eks_cluster" "test" {
   name     = %[1]q
   role_arn = aws_iam_role.test.arn
+  version  = %[2]q
 
   vpc_config {
     subnet_ids = aws_subnet.test[*].id
@@ -540,11 +626,11 @@ resource "aws_eks_cluster" "test" {
 
   depends_on = [aws_iam_role_policy_attachment.test-AmazonEKSClusterPolicy]
 }
-`, rName))
+`, rName, eksVersion))
 }
 
 func testAccAddonConfig_basic(rName, addonName string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_eks_addon" "test" {
   cluster_name = aws_eks_cluster.test.name
   addon_name   = %[2]q
@@ -553,7 +639,7 @@ resource "aws_eks_addon" "test" {
 }
 
 func testAccAddonConfig_version(rName, addonName, addonVersionDataSourceName string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 data "aws_eks_addon_version" "default" {
   addon_name         = %[2]q
   kubernetes_version = aws_eks_cluster.test.version
@@ -576,7 +662,7 @@ resource "aws_eks_addon" "test" {
 }
 
 func testAccAddonConfig_preserve(rName, addonName string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_eks_addon" "test" {
   cluster_name = aws_eks_cluster.test.name
   addon_name   = %[2]q
@@ -587,7 +673,7 @@ resource "aws_eks_addon" "test" {
 
 func testAccAddonConfig_podIdentityAssociation(rName, addonName, serviceAccount string) string {
 	return acctest.ConfigCompose(
-		testAccAddonConfig_base(rName),
+		testAccAddonConfig_base(rName, clusterVersion133),
 		fmt.Sprintf(`
 data "aws_iam_policy_document" "test_assume_role" {
   statement {
@@ -628,7 +714,7 @@ resource "aws_eks_addon" "test" {
 }
 
 func testAccAddonConfig_resolveConflicts(rName, addonName, resolveConflictsOnCreate, resolveConflictsOnUpdate string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_eks_addon" "test" {
   cluster_name                = aws_eks_cluster.test.name
   addon_name                  = %[2]q
@@ -639,7 +725,7 @@ resource "aws_eks_addon" "test" {
 }
 
 func testAccAddonConfig_serviceAccountRoleARN(rName, addonName string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_iam_role" "test_service_role" {
   name               = "test-service-role"
   assume_role_policy = <<EOF
@@ -668,7 +754,7 @@ resource "aws_eks_addon" "test" {
 }
 
 func testAccAddonConfig_tags1(rName, addonName, tagKey1, tagValue1 string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_eks_addon" "test" {
   cluster_name = aws_eks_cluster.test.name
   addon_name   = %[2]q
@@ -681,7 +767,7 @@ resource "aws_eks_addon" "test" {
 }
 
 func testAccAddonConfig_tags2(rName, addonName, tagKey1, tagValue1, tagKey2, tagValue2 string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_eks_addon" "test" {
   cluster_name = aws_eks_cluster.test.name
   addon_name   = %[2]q
@@ -695,7 +781,7 @@ resource "aws_eks_addon" "test" {
 }
 
 func testAccAddonConfig_configurationValues(rName, addonName, configurationValues string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_eks_addon" "test" {
   cluster_name                = aws_eks_cluster.test.name
   addon_name                  = %[2]q
@@ -704,4 +790,124 @@ resource "aws_eks_addon" "test" {
   resolve_conflicts_on_update = "OVERWRITE"
 }
 `, rName, addonName, configurationValues))
+}
+
+func testAccAddonConfig_supportedAddons(rName string, addons []struct {
+	name             string
+	resolveConflicts string
+}) string {
+	var addonConfigs []string
+
+	addonConfigs = append(addonConfigs, `
+resource "aws_internet_gateway" "test" {
+  vpc_id = aws_vpc.test.id
+  tags = {
+    Name = %[1]q
+  }
+}
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.test.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.test.id
+  }
+  tags = {
+    Name = %[1]q
+  }
+}
+
+resource "aws_subnet" "public" {
+  count = 2
+  # make the cidr block bigger number to not conflict with the base ones
+  cidr_block        = "10.0.${sum([count.index,10])}.0/24"
+  vpc_id            = aws_vpc.test.id
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name                          = %[1]q
+    "kubernetes.io/cluster/%[1]s" = "shared"
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  count = 2
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+  
+resource "aws_eks_node_group" "test_node_group" {
+  cluster_name    = aws_eks_cluster.test.name
+  node_group_name = "test_node_group"
+  node_role_arn   = aws_iam_role.node_group.arn
+  subnet_ids      = aws_subnet.public[*].id
+  scaling_config {
+    desired_size = 1
+    max_size     = 2
+    min_size     = 1
+  }
+  update_config {
+    max_unavailable = 1
+  }
+
+  # Ensure that IAM Role permissions are created before and deleted after EKS Node Group handling.
+  # Otherwise, EKS will not be able to properly delete EC2 Instances and Elastic Network Interfaces.
+  depends_on = [
+    aws_iam_role_policy_attachment.node_group-AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.node_group-AmazonEKS_CNI_Policy,
+    aws_iam_role_policy_attachment.node_group-AmazonEC2ContainerRegistryReadOnly,
+  ]
+}
+
+data "aws_service_principal" "ec2" {
+  service_name = "ec2"
+}
+
+resource "aws_iam_role" "node_group" {
+  assume_role_policy = jsonencode({
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "${data.aws_service_principal.ec2.name}"
+      }
+    }]
+    Version = "2012-10-17"
+  })
+}
+resource "aws_iam_role_policy_attachment" "node_group-AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.node_group.name
+}
+resource "aws_iam_role_policy_attachment" "node_group-AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.node_group.name
+}
+resource "aws_iam_role_policy_attachment" "node_group-AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.node_group.name
+}
+
+resource "aws_eks_addon" "test_vpc_cni" {
+  cluster_name = aws_eks_cluster.test.name
+  addon_name   = "vpc-cni"
+}
+
+`)
+
+	for _, addon := range addons {
+		resourceName := strings.ReplaceAll(addon.name, "-", "_")
+		addonConfig := fmt.Sprintf(`
+	resource "aws_eks_addon" "test_%s" {
+	  cluster_name                = aws_eks_cluster.test.name
+	  addon_name                  = %q
+
+	  depends_on = [
+		aws_eks_node_group.test_node_group,
+	  ]
+	}
+	  `, resourceName, addon.name)
+		addonConfigs = append(addonConfigs, addonConfig)
+	}
+
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(strings.Join(addonConfigs, "\n"), rName, clusterVersion133))
 }

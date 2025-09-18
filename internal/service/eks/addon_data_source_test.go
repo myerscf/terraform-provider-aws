@@ -76,7 +76,7 @@ func TestAccEKSAddonDataSource_configurationValues(t *testing.T) {
 }
 
 func testAccAddonDataSourceConfig_basic(rName, addonName string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_eks_addon" "test" {
   addon_name   = %[2]q
   cluster_name = aws_eks_cluster.test.name
@@ -95,7 +95,7 @@ data "aws_eks_addon" "test" {
 }
 
 func testAccAddonDataSourceConfig_configurationValues(rName, addonName, addonVersion, configurationValues, resolveConflicts string) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_eks_addon" "test" {
   cluster_name                = aws_eks_cluster.test.name
   addon_name                  = %[2]q

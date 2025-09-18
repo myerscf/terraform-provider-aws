@@ -46,7 +46,7 @@ func TestAccEKSAddonVersionDataSource_basic(t *testing.T) {
 }
 
 func testAccAddonVersionDataSourceConfig_basic(rName, addonName string, mostRecent bool) string {
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName), fmt.Sprintf(`
+	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 data "aws_eks_addon_version" "test" {
   addon_name         = %[2]q
   kubernetes_version = aws_eks_cluster.test.version
