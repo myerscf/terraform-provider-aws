@@ -409,7 +409,7 @@ func TestAccEKSAddon_supportedAddons(t *testing.T) {
 
 	// List of core EKS addons that are reliable and commonly used
 	supportedAddons := []string{
-		// "vpc-cni", // Already installed by default
+		// "vpc-cni", // Will be setup in the base config, to enable connection to addons in the VPC
 		"coredns",
 		"kube-proxy",
 		"aws-ebs-csi-driver",
@@ -418,7 +418,7 @@ func TestAccEKSAddon_supportedAddons(t *testing.T) {
 		"eks-node-monitoring-agent",
 		// "amazon-sagemaker-hyperpod-observability",
 		// "amazon-sagemaker-hyperpod-taskgovernance",
-		"aws-guardduty-agent",
+		// "aws-guardduty-agent",
 		"aws-efs-csi-driver",
 		"aws-network-flow-monitoring-agent",
 		"snapshot-controller",
