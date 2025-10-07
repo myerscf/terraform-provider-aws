@@ -464,6 +464,86 @@ func TestAccEKSAddon_supportedAddons(t *testing.T) {
 	}
 }
 
+func TestAccEKSAddon_supportedAddonsForSageMaker(t *testing.T) {
+	ctx := acctest.Context(t)
+
+	// List of SageMaker HyperPod EKS addons
+	sageMakerAddons := []string{
+		"amazon-sagemaker-hyperpod-observability",
+		"amazon-sagemaker-hyperpod-taskgovernance",
+	}
+
+	for _, addonName := range sageMakerAddons {
+		t.Run(addonName, func(t *testing.T) {
+			var addonResource types.Addon
+			rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
+			clusterResourceName := "aws_eks_cluster.test"
+			addonResourceName := "aws_eks_addon.test"
+
+			resource.ParallelTest(t, resource.TestCase{
+				PreCheck:                 func() { acctest.PreCheck(ctx, t); testAccPreCheck(ctx, t); testAccPreCheckAddon(ctx, t) },
+				ErrorCheck:               acctest.ErrorCheck(t, names.EKSServiceID),
+				ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
+				CheckDestroy:             testAccCheckAddonDestroy(ctx),
+				Steps: []resource.TestStep{
+					{
+						Config: testAccAddonConfig_sageMakerAddon(rName, addonName),
+						Check: resource.ComposeAggregateTestCheckFunc(
+							testAccCheckAddonExists(ctx, addonResourceName, &addonResource),
+							resource.TestCheckResourceAttr(addonResourceName, "addon_name", addonName),
+							resource.TestCheckResourceAttrSet(addonResourceName, "addon_version"),
+							acctest.MatchResourceAttrRegionalARN(ctx, addonResourceName, names.AttrARN, "eks", regexache.MustCompile(fmt.Sprintf("addon/%s/%s/.+$", rName, addonName))),
+							resource.TestCheckResourceAttrPair(addonResourceName, names.AttrClusterName, clusterResourceName, names.AttrName),
+							resource.TestCheckResourceAttr(clusterResourceName, names.AttrVersion, clusterVersion133),
+						),
+					},
+					{
+						ResourceName:            addonResourceName,
+						ImportState:             true,
+						ImportStateVerify:       true,
+						ImportStateVerifyIgnore: []string{"resolve_conflicts_on_create", "resolve_conflicts_on_update"},
+					},
+				},
+			})
+		})
+	}
+}
+
+func TestAccEKSAddon_supportedAddonsForGuardDuty(t *testing.T) {
+	ctx := acctest.Context(t)
+	var addonResource types.Addon
+	rName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
+	clusterResourceName := "aws_eks_cluster.test"
+	addonResourceName := "aws_eks_addon.test"
+	addonName := "aws-guardduty-agent"
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(ctx, t); testAccPreCheck(ctx, t); testAccPreCheckAddon(ctx, t) },
+		ErrorCheck:               acctest.ErrorCheck(t, names.EKSServiceID),
+		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
+		CheckDestroy:             testAccCheckAddonDestroy(ctx),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAddonConfig_guardDutyAddon(rName, addonName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckAddonExists(ctx, addonResourceName, &addonResource),
+					resource.TestCheckResourceAttr(addonResourceName, "addon_name", addonName),
+					resource.TestCheckResourceAttrSet(addonResourceName, "addon_version"),
+					acctest.MatchResourceAttrRegionalARN(ctx, addonResourceName, names.AttrARN, "eks", regexache.MustCompile(fmt.Sprintf("addon/%s/%s/.+$", rName, addonName))),
+					resource.TestCheckResourceAttrPair(addonResourceName, names.AttrClusterName, clusterResourceName, names.AttrName),
+					resource.TestCheckResourceAttr(clusterResourceName, names.AttrVersion, clusterVersion133),
+				),
+			},
+			{
+				ResourceName:            addonResourceName,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"resolve_conflicts_on_create", "resolve_conflicts_on_update"},
+			},
+		},
+	})
+}
+
 func testAccCheckAddonExists(ctx context.Context, n string, v *types.Addon) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[n]
@@ -768,125 +848,6 @@ resource "aws_eks_addon" "test" {
 `, rName, addonName, configurationValues))
 }
 
-func testAccAddonConfig_supportedAddons(rName string, addons []struct {
-	name             string
-	resolveConflicts string
-}) string {
-	var addonConfigs []string
-
-	addonConfigs = append(addonConfigs, `
-resource "aws_internet_gateway" "test" {
-  vpc_id = aws_vpc.test.id
-  tags = {
-    Name = %[1]q
-  }
-}
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.test.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.test.id
-  }
-  tags = {
-    Name = %[1]q
-  }
-}
-
-resource "aws_subnet" "public" {
-  count = 2
-  # make the cidr block bigger number to not conflict with the base ones
-  cidr_block        = "10.0.${sum([count.index,10])}.0/24"
-  vpc_id            = aws_vpc.test.id
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name                          = %[1]q
-    "kubernetes.io/cluster/%[1]s" = "shared"
-  }
-}
-
-resource "aws_route_table_association" "public" {
-  count = 2
-  subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
-}
-  
-resource "aws_eks_node_group" "test_node_group" {
-  cluster_name    = aws_eks_cluster.test.name
-  node_group_name = "test_node_group"
-  node_role_arn   = aws_iam_role.node_group.arn
-  subnet_ids      = aws_subnet.public[*].id
-  scaling_config {
-    desired_size = 1
-    max_size     = 2
-    min_size     = 1
-  }
-  update_config {
-    max_unavailable = 1
-  }
-
-  # Ensure that IAM Role permissions are created before and deleted after EKS Node Group handling.
-  # Otherwise, EKS will not be able to properly delete EC2 Instances and Elastic Network Interfaces.
-  depends_on = [
-    aws_iam_role_policy_attachment.node_group-AmazonEKSWorkerNodePolicy,
-    aws_iam_role_policy_attachment.node_group-AmazonEKS_CNI_Policy,
-    aws_iam_role_policy_attachment.node_group-AmazonEC2ContainerRegistryReadOnly,
-  ]
-}
-
-data "aws_service_principal" "ec2" {
-  service_name = "ec2"
-}
-
-resource "aws_iam_role" "node_group" {
-  assume_role_policy = jsonencode({
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "${data.aws_service_principal.ec2.name}"
-      }
-    }]
-    Version = "2012-10-17"
-  })
-}
-resource "aws_iam_role_policy_attachment" "node_group-AmazonEKSWorkerNodePolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-  role       = aws_iam_role.node_group.name
-}
-resource "aws_iam_role_policy_attachment" "node_group-AmazonEKS_CNI_Policy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-  role       = aws_iam_role.node_group.name
-}
-resource "aws_iam_role_policy_attachment" "node_group-AmazonEC2ContainerRegistryReadOnly" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-  role       = aws_iam_role.node_group.name
-}
-
-resource "aws_eks_addon" "test_vpc_cni" {
-  cluster_name = aws_eks_cluster.test.name
-  addon_name   = "vpc-cni"
-}
-
-`)
-
-	for _, addon := range addons {
-		resourceName := strings.ReplaceAll(addon.name, "-", "_")
-		addonConfig := fmt.Sprintf(`
-	resource "aws_eks_addon" "test_%s" {
-	  cluster_name                = aws_eks_cluster.test.name
-	  addon_name                  = %q
-
-	  depends_on = [
-		aws_eks_node_group.test_node_group,
-	  ]
-	}
-	  `, resourceName, addon.name)
-		addonConfigs = append(addonConfigs, addonConfig)
-	}
-
-	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(strings.Join(addonConfigs, "\n"), rName, clusterVersion133))
-}
 func testAccAddonConfig_supportedAddon(rName, addonName string) string {
 	return acctest.ConfigCompose(testAccAddonConfig_base(rName, clusterVersion133), fmt.Sprintf(`
 resource "aws_internet_gateway" "test" {
@@ -1000,4 +961,167 @@ resource "aws_eks_addon" "test" {
   ]
 }
 `, rName, addonName))
+}
+
+func testAccAddonConfig_sageMakerAddon(rName, addonName string) string {
+	// First, get the base addon configuration without the addon resource itself
+	baseConfig := testAccAddonConfig_supportedAddon(rName, "placeholder")
+
+	// Remove the addon resource from the base config since we'll add our own with service dependencies
+	baseConfigWithoutAddon := strings.Replace(baseConfig, `
+resource "aws_eks_addon" "test" {
+  cluster_name                = aws_eks_cluster.test.name
+  addon_name                  = "placeholder"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [
+    aws_eks_node_group.test_node_group,
+  ]
+}`, "", 1)
+
+	// Add SageMaker-specific resources and the addon with enhanced dependencies
+	sageMakerConfig := fmt.Sprintf(`
+# Amazon Managed Prometheus workspace (required for SageMaker HyperPod addons)
+resource "aws_prometheus_workspace" "test" {
+  alias = "%[1]s-amp-workspace"
+
+  tags = {
+    Name = "%[1]s"
+  }
+}
+
+# SageMaker service role for HyperPod addons
+resource "aws_iam_role" "sagemaker_service_role" {
+  name = "%[1]s-sagemaker-service-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "sagemaker.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "sagemaker_service_role_policy" {
+  role       = aws_iam_role.sagemaker_service_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSageMakerFullAccess"
+}
+
+# Additional policy for Prometheus access
+resource "aws_iam_role_policy_attachment" "sagemaker_prometheus_policy" {
+  role       = aws_iam_role.sagemaker_service_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonPrometheusFullAccess"
+}
+
+resource "aws_eks_addon" "test" {
+  cluster_name                = aws_eks_cluster.test.name
+  addon_name                  = %[2]q
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+  
+  # Different configuration based on addon type
+  configuration_values = %[2]q == "amazon-sagemaker-hyperpod-observability" ? jsonencode({
+    ampWorkspace = aws_prometheus_workspace.test.id
+  }) : %[2]q == "amazon-sagemaker-hyperpod-taskgovernance" ? jsonencode({
+    # taskgovernance addon may not require any configuration or has different schema
+  }) : jsonencode({})
+
+  depends_on = [
+    aws_eks_node_group.test_node_group,
+    aws_iam_role.sagemaker_service_role,
+    aws_prometheus_workspace.test,
+  ]
+}
+`, rName, addonName)
+
+	return baseConfigWithoutAddon + sageMakerConfig
+}
+
+func testAccAddonConfig_guardDutyAddon(rName, addonName string) string {
+	// First, get the base addon configuration without the addon resource itself
+	baseConfig := testAccAddonConfig_supportedAddon(rName, "placeholder")
+
+	// Remove the addon resource from the base config since we'll add our own with service dependencies
+	baseConfigWithoutAddon := strings.Replace(baseConfig, `
+resource "aws_eks_addon" "test" {
+  cluster_name                = aws_eks_cluster.test.name
+  addon_name                  = "placeholder"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [
+    aws_eks_node_group.test_node_group,
+  ]
+}`, "", 1)
+
+	// Add GuardDuty-specific resources and the addon with enhanced dependencies
+	guardDutyConfig := fmt.Sprintf(`
+# GuardDuty service role for agent addon
+resource "aws_iam_role" "guardduty_service_role" {
+  name = "%[1]s-guardduty-service-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "guardduty.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "guardduty_service_role_policy" {
+  role       = aws_iam_role.guardduty_service_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonGuardDutyFullAccess"
+}
+
+# GuardDuty detector (required for GuardDuty agent)
+resource "aws_guardduty_detector" "test" {
+  enable = true
+
+  datasources {
+    s3_logs {
+      enable = true
+    }
+    kubernetes {
+      audit_logs {
+        enable = true
+      }
+    }
+    malware_protection {
+      scan_ec2_instance_with_findings {
+        ebs_volumes {
+          enable = true
+        }
+      }
+    }
+  }
+}
+
+resource "aws_eks_addon" "test" {
+  cluster_name                = aws_eks_cluster.test.name
+  addon_name                  = %[2]q
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [
+    aws_eks_node_group.test_node_group,
+    aws_iam_role.guardduty_service_role,
+    aws_guardduty_detector.test,
+  ]
+}
+`, rName, addonName)
+
+	return baseConfigWithoutAddon + guardDutyConfig
 }
