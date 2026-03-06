@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/opensearch"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/opensearch/types"
+	"github.com/hashicorp/aws-sdk-go-base/v2/endpoints"
 	awspolicy "github.com/hashicorp/awspolicyequivalence"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
@@ -72,6 +73,7 @@ func resourceDomain() *schema.Resource {
 		},
 
 		CustomizeDiff: customdiff.Sequence(
+			validateTLSSecurityPolicy,
 			customdiff.ForceNewIf(names.AttrEngineVersion, func(ctx context.Context, d *schema.ResourceDiff, meta any) bool {
 				newVersion := d.Get(names.AttrEngineVersion).(string)
 				domainName := d.Get(names.AttrDomainName).(string)
@@ -521,10 +523,9 @@ func resourceDomain() *schema.Resource {
 							Default:  true,
 						},
 						"tls_security_policy": {
-							Type:             schema.TypeString,
-							Optional:         true,
-							Computed:         true,
-							ValidateDiagFunc: enum.Validate[awstypes.TLSSecurityPolicy](),
+							Type:     schema.TypeString,
+							Optional: true,
+							Computed: true,
 						},
 					},
 				},
@@ -1461,6 +1462,47 @@ func inPlaceEncryptionEnableVersion(version string) bool {
 	}
 
 	return false
+}
+
+// validateTLSSecurityPolicy validates the TLS security policy based on the current region.
+// Newer regions may support policies not yet available in the SDK enum.
+func validateTLSSecurityPolicy(_ context.Context, d *schema.ResourceDiff, meta any) error {
+	if v, ok := d.GetOk("domain_endpoint_options"); ok {
+		options := v.([]any)
+		if len(options) > 0 && options[0] != nil {
+			m := options[0].(map[string]any)
+			if policy, ok := m["tls_security_policy"].(string); ok && policy != "" {
+				region := meta.(*conns.AWSClient).Region(context.Background())
+				validPolicies := validTLSSecurityPolicies(region)
+				if !slices.Contains(validPolicies, policy) {
+					return fmt.Errorf("invalid tls_security_policy %q for region %q, valid values: %v", policy, region, validPolicies)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validTLSSecurityPolicies returns the valid TLS security policies for the given region.
+// Isolated regions (ISO, ISOB, ISOE, ISOF) may have a restricted set of policies,
+// while newer regions may support additional policies not yet in the SDK.
+func validTLSSecurityPolicies(region string) []string {
+	partition := names.PartitionForRegion(region).ID()
+
+	switch partition {
+	case endpoints.AwsIsoPartitionID, endpoints.AwsIsoBPartitionID, endpoints.AwsIsoEPartitionID, endpoints.AwsIsoFPartitionID:
+		// Isolated regions only support TLS 1.2 policies.
+		return enum.Slice(
+			awstypes.TLSSecurityPolicyPolicyMinTls12201907,
+			awstypes.TLSSecurityPolicyPolicyMinTls12Pfs202310,
+		)
+	default:
+		return enum.Slice(
+			awstypes.TLSSecurityPolicyPolicyMinTls10201907,
+			awstypes.TLSSecurityPolicyPolicyMinTls12201907,
+			awstypes.TLSSecurityPolicyPolicyMinTls12Pfs202310,
+		)
+	}
 }
 
 // validateJWTOptionsVersion validates that JWT options are only used with OpenSearch 2.11 or later.
